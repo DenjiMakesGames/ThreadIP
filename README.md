@@ -40,8 +40,8 @@ sequenceDiagram
 
 ### 1. Clone the Repo  
 ```bash
-git clone https://github.com/yourname/SocketSquad.git
-cd SocketSquad
+git clone https://github.com/yourname/ThreadIP.git
+cd ThreadIP
 ```
 
 ### 2. Run the Server  
