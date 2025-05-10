@@ -77,6 +77,15 @@ python client.py
 
 ---
 
+## 🔧 Troubleshooting Guide
+Can't Connect? → Check: 
+1. Server running? → netstat
+2. Port open? → https://portchecker.co
+3. Firewall disabled? → netsh firewall show state
+4. Correct IP? → curl ifconfig.me
+
+---
+
 ## 🤝 Contribute  
 1. Fork the repo.  
 2. Add a feature (e.g., encryption, file sharing).  
