@@ -2,110 +2,112 @@ import socket
 import threading
 import sys
 import time
-from utils import NetworkUtils, Logger
+from utils import log_message
 
 class ChatClient:
     def __init__(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.running = False
-        self.username = ""
+        self.client_socket = None
 
-    def connect(self, host: str, port: int) -> bool:
-        """Establish connection with timeout handling"""
-        try:
-            Logger.log(f"Connecting to {host}:{port}...")
-            self.socket.settimeout(5)
-            self.socket.connect((host, port))
-            self.running = True
-            return True
-        except Exception as e:
-            Logger.log(f"Connection failed: {str(e)}", "ERROR")
-            return False
-
-    def authenticate(self) -> bool:
-        """Handle login/registration flow"""
-        try:
-            # Get server prompts
-            data = self.socket.recv(1024).decode()
-            print(data, end='')
-            choice = input().strip().upper()
-            self.socket.sendall(choice.encode() + b'\n')
-
-            data = self.socket.recv(1024).decode()
-            print(data, end='')
-            self.username = input().strip()
-            self.socket.sendall(self.username.encode() + b'\n')
-
-            data = self.socket.recv(1024).decode()
-            print(data, end='')
-            password = input().strip()
-            self.socket.sendall(password.encode() + b'\n')
-
-            # Get final response
-            data = self.socket.recv(1024).decode()
-            print(data, end='')
-            return "Welcome" in data
-        except Exception as e:
-            Logger.log(f"Auth error: {str(e)}", "ERROR")
-            return False
-
-    def receive_thread(self):
-        """Handle incoming messages"""
+    def receive_messages(self):
         while self.running:
             try:
-                data = self.socket.recv(1024)
+                data = self.client_socket.recv(1024)
                 if not data:
-                    Logger.log("Server disconnected", "WARNING")
-                    self.running = False
+                    self.shutdown()
                     break
-                print(data.decode(), end='')
+                message = data.decode('utf-8', errors='replace')
+                print(message, end='')
+                if ":" in message:
+                    sender, content = message.split(":", 1)
+                    log_message(sender.strip(), content.strip(), "received")
+            except (ConnectionResetError, socket.timeout):
+                print("\n[!] Connection lost")
+                self.shutdown()
+                break
             except Exception as e:
-                Logger.log(f"Receive error: {str(e)}", "ERROR")
-                self.running = False
+                print(f"\n[!] Receive error: {str(e)}")
+                self.shutdown()
+                break
 
-    def heartbeat_thread(self):
-        """Maintain connection alive"""
+    def send_heartbeat(self):
         while self.running:
             time.sleep(30)
             try:
-                self.socket.sendall(b'\x00')
+                self.client_socket.send(b'\x00')  # Null byte heartbeat
             except:
-                self.running = False
+                self.shutdown()
+                break
+
+    def connect_to_server(self, host, port):
+        try:
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.settimeout(10)  # Connection timeout
+            self.client_socket.connect((host, port))
+            self.running = True
+            return True
+        except Exception as e:
+            print(f"[!] Connection failed: {str(e)}")
+            return False
+
+    def shutdown(self):
+        self.running = False
+        if self.client_socket:
+            self.client_socket.close()
+
+    def auth_flow(self):
+        try:
+            # Get initial prompt
+            data = self.client_socket.recv(1024).decode('utf-8')
+            print(data, end='')
+            
+            # Send auth choice
+            choice = input().strip().upper()
+            self.client_socket.send(choice.encode() + b'\n')
+            
+            # Handle username/password
+            for prompt in ["Username", "Password"]:
+                data = self.client_socket.recv(1024).decode('utf-8')
+                print(data, end='')
+                response = input().strip()
+                self.client_socket.send(response.encode() + b'\n')
+            
+            # Get final response
+            data = self.client_socket.recv(1024).decode('utf-8')
+            print(data, end='')
+            return "Welcome" in data
+        except Exception as e:
+            print(f"\n[!] Auth error: {str(e)}")
+            return False
 
     def run(self):
-        """Main client loop"""
-        print("\nGlobal Chat Client")
-        print("=" * 40)
-        
-        host = input("Server IP/Domain: ").strip()
-        port = int(input("Port (default 5000): ") or 5000)
+        print("Termux Chat Client\n" + "="*20)
+        host = input("Enter server IP/hostname: ").strip()
+        port = int(input("Enter port (default 5000): ")) or 5000
 
-        if not self.connect(host, port):
+        if not self.connect_to_server(host, port):
             return
 
-        if not self.authenticate():
-            self.socket.close()
+        if not self.auth_flow():
+            self.shutdown()
             return
 
-        # Start threads
-        threading.Thread(target=self.receive_thread, daemon=True).start()
-        threading.Thread(target=self.heartbeat_thread, daemon=True).start()
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
 
-        # Input loop
         try:
             while self.running:
                 msg = input()
                 if msg.lower() == "/quit":
-                    self.socket.sendall(b"/quit\n")
-                    self.running = False
+                    self.client_socket.send(b"/quit\n")
+                    self.shutdown()
                 else:
-                    self.socket.sendall(msg.encode() + b'\n')
+                    self.client_socket.send(msg.encode() + b'\n')
+                    log_message("You", msg, "sent")
         except KeyboardInterrupt:
             print("\nDisconnecting...")
         finally:
-            self.socket.close()
-            sys.exit(0)
+            self.shutdown()
 
 if __name__ == "__main__":
     ChatClient().run()

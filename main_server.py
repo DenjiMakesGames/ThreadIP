@@ -1,50 +1,83 @@
 import socket
 import threading
-from utils import DatabaseManager, NetworkUtils, Logger
+import select
+from auth import init_db, authenticate_user, register_user, is_admin
 from session_manager import session_manager
-import auth
+from utils import log_session, log_message
+from admin import handle_admin_command
 
 class ChatServer:
-    def __init__(self, port=5000):
+    def __init__(self, host='0.0.0.0', port=5000):
+        self.host = host
         self.port = port
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket = None
         self.running = False
 
     def start(self):
-        """Start the server with proper initialization"""
-        DatabaseManager.initialize()
-        auth.init_db()
+        init_db()
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(5)
+        self.running = True
+
+        print(f"[+] Server started on {self.host}:{self.port}")
+        log_session("Server started")
 
         try:
-            self.server_socket.bind(('0.0.0.0', self.port))
-            self.server_socket.listen()
-            self.running = True
-            
-            local_ip, public_ip = NetworkUtils.get_ip_info()
-            Logger.log(f"Server started on port {self.port}")
-            Logger.log(f"Local: {local_ip}:{self.port}")
-            Logger.log(f"Public: {public_ip}:{self.port}")
-
             while self.running:
-                conn, addr = self.server_socket.accept()
-                threading.Thread(
-                    target=self.handle_client,
-                    args=(conn, addr),
-                    daemon=True
-                ).start()
-        except Exception as e:
-            Logger.log(f"Server error: {str(e)}", "ERROR")
+                readable, _, _ = select.select([self.server_socket], [], [], 1)
+                if readable:
+                    conn, addr = self.server_socket.accept()
+                    threading.Thread(
+                        target=self.handle_client,
+                        args=(conn, addr),
+                        daemon=True
+                    ).start()
+        except KeyboardInterrupt:
+            self.stop()
+
+    def stop(self):
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        print("\n[!] Server stopped")
 
     def handle_client(self, conn, addr):
-        """Handle individual client connection"""
         username = ""
         try:
             conn.settimeout(30)
             
-            # Authentication flow
-            if not self.authenticate_client(conn):
+            # Auth flow
+            conn.send(b"Login or Register? (L/R): ")
+            choice = conn.recv(1024).decode('utf-8', errors='ignore').strip().upper()
+
+            conn.send(b"Username: ")
+            username = conn.recv(1024).decode('utf-8', errors='replace').strip()
+
+            conn.send(b"Password: ")
+            password = conn.recv(1024).decode('utf-8', errors='replace').strip()
+
+            if choice == 'R':
+                if not register_user(username, password):
+                    conn.send(b"Registration failed (invalid username or exists).\n")
+                    return
+                conn.send(b"Registered successfully.\n")
+            elif choice == 'L':
+                if not authenticate_user(username, password):
+                    conn.send(b"Invalid credentials.\n")
+                    return
+            else:
+                conn.send(b"Invalid choice.\n")
                 return
+
+            if not session_manager.add_user(username, conn):
+                conn.send(b"You are banned.\n")
+                return
+
+            conn.send(b"Welcome! Type /quit to exit.\n")
+            log_session(f"{username} connected from {addr[0]}")
+            session_manager.broadcast(f"{username} joined the chat")
 
             # Main message loop
             while self.running:
@@ -52,77 +85,43 @@ class ChatServer:
                     data = conn.recv(1024)
                     if not data:
                         break
-                    
-                    self.process_message(conn, username, data)
+
+                    message = data.decode('utf-8', errors='replace').strip()
+                    if not message:
+                        continue
+
+                    if message.lower() == "/quit":
+                        conn.send(b"Goodbye!\n")
+                        break
+
+                    if message.startswith("/admin"):
+                        if is_admin(username):
+                            response = handle_admin_command(message[6:].strip())
+                            conn.send(f"{response}\n".encode())
+                        else:
+                            conn.send(b"Permission denied.\n")
+                        continue
+
+                    if session_manager.is_muted(username):
+                        conn.send(b"You are muted.\n")
+                        continue
+
+                    log_message(username, message)
+                    session_manager.broadcast(f"{username}: {message}", exclude=username)
+
                 except socket.timeout:
-                    continue
-                except Exception as e:
-                    Logger.log(f"Client error: {str(e)}", "ERROR")
+                    conn.send(b"\nPing...\n")  # Keepalive check
+                except (ConnectionResetError, OSError):
                     break
+
+        except Exception as e:
+            log_session(f"Error with {username or addr}: {str(e)}", "ERROR")
         finally:
             if username:
                 session_manager.remove_user(username)
+                session_manager.broadcast(f"{username} left the chat")
             conn.close()
 
-    def authenticate_client(self, conn, addr) -> bool:  # Added addr parameter
-        """Handle client authentication"""
-        try:
-            conn.sendall(b"Login or Register? (L/R): ")
-            choice = conn.recv(1024).decode().strip().upper()
-
-            conn.sendall(b"Username: ")
-            username = conn.recv(1024).decode().strip()
-
-            conn.sendall(b"Password: ")
-            password = conn.recv(1024).decode().strip()
-
-            if choice == 'R':
-                if not auth.register_user(username, password):
-                    conn.sendall(b"Registration failed.\n")
-                    return False
-                conn.sendall(b"Registered successfully.\n")
-            elif choice == 'L':
-                if not auth.authenticate_user(username, password):
-                    conn.sendall(b"Invalid credentials.\n")
-                    return False
-            else:
-                conn.sendall(b"Invalid choice.\n")
-                return False
-
-            if not session_manager.add_user(username, conn):
-                conn.sendall(b"You are banned.\n")
-                return False
-
-            conn.sendall(b"Welcome to global chat!\n")
-            Logger.log(f"{username} connected from {addr[0]}")
-            return True
-        except Exception as e:
-            Logger.log(f"Auth error: {str(e)}", "ERROR")
-            return False
-
-    def process_message(self, conn, username, data):
-        """Process incoming messages"""
-        try:
-            message = data.decode('utf-8').strip()
-            
-            if message.lower() == "/quit":
-                conn.sendall(b"Goodbye!\n")
-                return
-                
-            # Process admin commands or broadcast
-            session_manager.handle_message(username, message, conn)
-        except UnicodeDecodeError:
-            Logger.log(f"Invalid encoding from {username}", "WARNING")
-
-    def stop(self):
-        """Graceful shutdown"""
-        self.running = False
-        self.server_socket.close()
-        Logger.log("Server stopped")
-
 if __name__ == "__main__":
-    server = ChatServer(port=5000)
-    try:
-        server.start()
-    except KeyboardInterrupt:
-        server.stop()
+    server = ChatServer()
+    server.start()
