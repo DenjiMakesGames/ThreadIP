@@ -64,7 +64,7 @@ class ChatServer:
                 session_manager.remove_user(username)
             conn.close()
 
-    def authenticate_client(self, conn) -> bool:
+    def authenticate_client(self, conn, addr) -> bool:  # Added addr parameter
         """Handle client authentication"""
         try:
             conn.sendall(b"Login or Register? (L/R): ")
