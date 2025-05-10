@@ -1,22 +1,19 @@
 import threading
-from utils import broadcast_message, log_session
+from utils import log_session, broadcast_message
 
 class SessionManager:
     def __init__(self):
-        self.connected_users = {}  # {username: socket}
+        self.connected_users = {}
         self.banned_users = set()
         self.muted_users = set()
-        self.user_warnings = {}
         self.lock = threading.Lock()
 
-    def add_user(self, username: str, client_socket) -> bool:
+    def add_user(self, username, conn):
         with self.lock:
             if username in self.banned_users:
                 return False
-            self.connected_users[username] = client_socket
-        broadcast_message(f"{username} has joined the chat.", self.connected_users)
-        log_session(f"{username} connected.")
-        return True
+            self.connected_users[username] = conn
+            return True
 
     def remove_user(self, username: str):
         with self.lock:
@@ -24,6 +21,14 @@ class SessionManager:
                 del self.connected_users[username]
                 broadcast_message(f"{username} has left the chat.", self.connected_users)
                 log_session(f"{username} disconnected.")
+
+    def broadcast(self, message):
+        with self.lock:
+            for user, sock in list(self.connected_users.items()):
+                try:
+                    sock.send(f"{message}\n".encode())
+                except:
+                    self.remove_user(user)
 
     def list_users(self) -> list:
         with self.lock:

@@ -1,87 +1,80 @@
 import socket
 import threading
-import utils
 import sys
+import time
+import requests
 
-def receive(client, running_flag):
-    while running_flag[0]:
-        try:
-            message = client.recv(1024).decode()
-            if not message:
-                break
-            print(message, end='')
-            if ":" in message:
-                sender, msg = message.split(":", 1)
-                utils.log_message(sender.strip(), msg.strip(), "received")
-        except ConnectionResetError:
-            print("\nConnection lost with server")
-            running_flag[0] = False
-            break
-        except Exception as e:
-            print(f"\nError: {str(e)}")
-            running_flag[0] = False
-            break
-
-def write(client, username, running_flag):
-    while running_flag[0]:
-        try:
-            msg = input()
-            if msg.lower() == "/quit":
-                client.send(msg.encode())
-                running_flag[0] = False
-                break
-            client.send(msg.encode())
-            utils.log_message(username, msg)
-        except Exception as e:
-            print(f"Send error: {str(e)}")
-            running_flag[0] = False
-            break
-
-def main():
-    server_ip = input("Enter server IP: ").strip()
-    port = 12345
-
+def get_public_ip():
     try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect((server_ip, port))
-    except Exception as e:
-        print(f"Connection failed: {str(e)}")
-        return
+        return requests.get('https://api.ipify.org').text
+    except:
+        return "Unable to determine public IP"
 
-    try:
-        # Auth flow
-        print(client.recv(1024).decode(), end='')  # L/R prompt
-        choice = input().upper()
-        client.send(choice.encode())
+class ChatClient:
+    def __init__(self):
+        self.running = False
+        self.client_socket = None
 
-        print(client.recv(1024).decode(), end='')  # Username prompt
-        username = input().strip()
-        client.send(username.encode())
+    def connect_to_server(self, server_ip, port):
+        try:
+            print(f"\nConnecting to {server_ip}:{port}...")
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.settimeout(10)
+            self.client_socket.connect((server_ip, port))
+            self.running = True
+            return True
+        except Exception as e:
+            print(f"[!] Connection failed: {str(e)}")
+            return False
 
-        print(client.recv(1024).decode(), end='')  # Password prompt
-        password = input().strip()
-        client.send(password.encode())
+    def receive_messages(self):
+        while self.running:
+            try:
+                message = self.client_socket.recv(1024).decode('utf-8', errors='replace')
+                if not message:
+                    print("\n[!] Server disconnected")
+                    self.running = False
+                    break
+                print(message, end='')
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print(f"\n[!] Receive error: {str(e)}")
+                self.running = False
 
-        # Get auth response
-        response = client.recv(1024).decode()
-        print(response, end='')
-        if "failed" in response.lower() or "invalid" in response.lower():
-            client.close()
+    def send_heartbeat(self):
+        while self.running:
+            time.sleep(30)
+            try:
+                self.client_socket.send(b'\x00')
+            except:
+                self.running = False
+
+    def start(self):
+        print("Global Chat Client\n" + "="*20)
+        print(f"Your public IP: {get_public_ip()}\n")
+        
+        server_ip = input("Enter server IP/domain: ").strip()
+        port = int(input("Enter port (default 5000): ") or 5000)
+
+        if not self.connect_to_server(server_ip, port):
             return
 
-        running = [True]
-        threading.Thread(
-            target=receive,
-            args=(client, running),
-            daemon=True
-        ).start()
-        write(client, username, running)
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
 
-    except KeyboardInterrupt:
-        print("\nDisconnecting...")
-    finally:
-        client.close()
-        sys.exit(0)
+        try:
+            while self.running:
+                msg = input()
+                if msg.lower() == "/quit":
+                    self.client_socket.send(b"/quit\n")
+                    self.running = False
+                else:
+                    self.client_socket.send(msg.encode() + b'\n')
+        except KeyboardInterrupt:
+            print("\nDisconnecting...")
+        finally:
+            self.client_socket.close()
 
 if __name__ == "__main__":
-    main()
+    ChatClient().start()
