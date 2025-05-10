@@ -1,29 +1,31 @@
 import socket
 import threading
-from utils import log_session
+from utils import DatabaseManager, NetworkUtils, Logger
 from session_manager import session_manager
 import auth
-from admin import handle_admin_command
 
 class ChatServer:
     def __init__(self, port=5000):
         self.port = port
-        self.server_socket = None
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.running = False
 
     def start(self):
+        """Start the server with proper initialization"""
+        DatabaseManager.initialize()
         auth.init_db()
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind(('0.0.0.0', self.port))
-        self.server_socket.listen()
-        self.running = True
-
-        print(f"[+] Server started on port {self.port}")
-        print(f"Global connect using your public IP and port {self.port}")
-        log_session("Server started")
 
         try:
+            self.server_socket.bind(('0.0.0.0', self.port))
+            self.server_socket.listen()
+            self.running = True
+            
+            local_ip, public_ip = NetworkUtils.get_ip_info()
+            Logger.log(f"Server started on port {self.port}")
+            Logger.log(f"Local: {local_ip}:{self.port}")
+            Logger.log(f"Public: {public_ip}:{self.port}")
+
             while self.running:
                 conn, addr = self.server_socket.accept()
                 threading.Thread(
@@ -31,89 +33,92 @@ class ChatServer:
                     args=(conn, addr),
                     daemon=True
                 ).start()
-        except OSError:
-            pass  # Socket closed intentionally
+        except Exception as e:
+            Logger.log(f"Server error: {str(e)}", "ERROR")
 
     def handle_client(self, conn, addr):
+        """Handle individual client connection"""
         username = ""
         try:
-            # Authentication flow
             conn.settimeout(30)
-            conn.send(b"Login or Register? (L/R): ")
-            choice = conn.recv(1024).decode('utf-8', errors='ignore').strip().upper()
-
-            conn.send(b"Username: ")
-            username = conn.recv(1024).decode('utf-8', errors='replace').strip()
-
-            conn.send(b"Password: ")
-            password = conn.recv(1024).decode('utf-8', errors='replace').strip()
-
-            # Auth logic
-            if choice == 'R':
-                if not auth.register_user(username, password):
-                    conn.send(b"Registration failed.\n")
-                    return
-                conn.send(b"Registered successfully.\n")
-            elif choice == 'L':
-                if not auth.authenticate_user(username, password):
-                    conn.send(b"Invalid credentials.\n")
-                    return
-            else:
-                conn.send(b"Invalid choice.\n")
+            
+            # Authentication flow
+            if not self.authenticate_client(conn):
                 return
 
-            if not session_manager.add_user(username, conn):
-                conn.send(b"You are banned.\n")
-                return
-
-            conn.send(b"Welcome to global chat!\n")
-            log_session(f"{username} connected from {addr[0]}")
-
-            # Message handling
+            # Main message loop
             while self.running:
                 try:
                     data = conn.recv(1024)
                     if not data:
                         break
-
-                    message = data.decode('utf-8', errors='replace').strip()
-                    self.process_message(username, conn, message)
-
+                    
+                    self.process_message(conn, username, data)
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    log_session(f"Error with {username}: {str(e)}", "ERROR")
+                    Logger.log(f"Client error: {str(e)}", "ERROR")
                     break
-
         finally:
             if username:
                 session_manager.remove_user(username)
             conn.close()
 
-    def process_message(self, username, conn, message):
-        if message.lower() == "/quit":
-            conn.send(b"Goodbye!\n")
-            return
+    def authenticate_client(self, conn) -> bool:
+        """Handle client authentication"""
+        try:
+            conn.sendall(b"Login or Register? (L/R): ")
+            choice = conn.recv(1024).decode().strip().upper()
 
-        if message.startswith("/admin"):
-            if auth.is_admin(username):
-                response = handle_admin_command(message[6:].strip())
-                conn.send(f"{response}\n".encode())
+            conn.sendall(b"Username: ")
+            username = conn.recv(1024).decode().strip()
+
+            conn.sendall(b"Password: ")
+            password = conn.recv(1024).decode().strip()
+
+            if choice == 'R':
+                if not auth.register_user(username, password):
+                    conn.sendall(b"Registration failed.\n")
+                    return False
+                conn.sendall(b"Registered successfully.\n")
+            elif choice == 'L':
+                if not auth.authenticate_user(username, password):
+                    conn.sendall(b"Invalid credentials.\n")
+                    return False
             else:
-                conn.send(b"Permission denied.\n")
-            return
+                conn.sendall(b"Invalid choice.\n")
+                return False
 
-        if session_manager.is_muted(username):
-            conn.send(b"You are muted.\n")
-            return
+            if not session_manager.add_user(username, conn):
+                conn.sendall(b"You are banned.\n")
+                return False
 
-        session_manager.broadcast(f"{username}: {message}")
+            conn.sendall(b"Welcome to global chat!\n")
+            Logger.log(f"{username} connected from {addr[0]}")
+            return True
+        except Exception as e:
+            Logger.log(f"Auth error: {str(e)}", "ERROR")
+            return False
+
+    def process_message(self, conn, username, data):
+        """Process incoming messages"""
+        try:
+            message = data.decode('utf-8').strip()
+            
+            if message.lower() == "/quit":
+                conn.sendall(b"Goodbye!\n")
+                return
+                
+            # Process admin commands or broadcast
+            session_manager.handle_message(username, message, conn)
+        except UnicodeDecodeError:
+            Logger.log(f"Invalid encoding from {username}", "WARNING")
 
     def stop(self):
+        """Graceful shutdown"""
         self.running = False
-        if self.server_socket:
-            self.server_socket.close()
-        print("\n[!] Server stopped")
+        self.server_socket.close()
+        Logger.log("Server stopped")
 
 if __name__ == "__main__":
     server = ChatServer(port=5000)
