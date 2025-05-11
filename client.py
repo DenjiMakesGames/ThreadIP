@@ -10,10 +10,9 @@ class ChatClient:
         self.running = False
         self.socket = None
         self.username = ""
-        self.debug_queue = Queue()  # For future debug expansion
+        self.debug_queue = Queue()
 
     def _send(self, message: str):
-        """Thread-safe socket sending with error handling"""
         try:
             if self.socket:
                 self.socket.send(message.encode() + b'\n')
@@ -22,7 +21,6 @@ class ChatClient:
             self.shutdown()
 
     def _receive(self):
-        """Main receive loop with proper decoding"""
         while self.running:
             try:
                 data = self.socket.recv(1024)
@@ -32,9 +30,9 @@ class ChatClient:
                     break
 
                 message = data.decode('utf-8', errors='replace').strip()
-                if message:  # Only process non-empty messages
+                if message:
                     print(message)
-                    if ":" in message:  # Log chat messages
+                    if ":" in message:
                         sender, content = message.split(":", 1)
                         log_message(sender.strip(), content.strip(), "received")
 
@@ -48,20 +46,17 @@ class ChatClient:
                 break
 
     def _heartbeat(self):
-        """Maintain connection with keepalive packets"""
         while self.running:
             time.sleep(30)
             try:
-                self._send("\x00")  # Null byte heartbeat
+                self._send("\x00")
             except:
                 self.shutdown()
                 break
 
     def auth_flow(self) -> bool:
-        """Handle authentication process"""
         try:
-            # Get server prompts
-            for _ in range(3):  # Expect 3 prompts (L/R, username, password)
+            for _ in range(3):
                 data = self.socket.recv(1024).decode('utf-8', errors='replace')
                 if not data:
                     return False
@@ -71,7 +66,6 @@ class ChatClient:
                     response = input().strip()
                     self._send(response)
 
-            # Get final auth response
             data = self.socket.recv(1024).decode('utf-8', errors='replace')
             print(data)
             return "Welcome" in data or "successfully" in data
@@ -81,7 +75,6 @@ class ChatClient:
             return False
 
     def connect(self, host: str, port: int) -> bool:
-        """Establish connection with timeout"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(10)
@@ -93,7 +86,6 @@ class ChatClient:
             return False
 
     def shutdown(self):
-        """Cleanup resources"""
         self.running = False
         if self.socket:
             try:
@@ -105,7 +97,8 @@ class ChatClient:
     def run(self):
         print("=== Chat Client ===")
         host = input("Server IP: ").strip()
-        port = int(input("Port [5000]: ")).strip() or 5000
+        port_input = input("Port [5000]: ").strip()
+        port = int(port_input) if port_input else 5000
 
         if not self.connect(host, port):
             print("\n[!] Connection failed (see debug for details)")
@@ -116,11 +109,9 @@ class ChatClient:
             self.shutdown()
             return
 
-        # Start network threads
         threading.Thread(target=self._receive, daemon=True).start()
         threading.Thread(target=self._heartbeat, daemon=True).start()
 
-        # Main input loop
         try:
             while self.running:
                 msg = input()
