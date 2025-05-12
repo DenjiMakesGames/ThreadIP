@@ -78,12 +78,26 @@ class ChatClient:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(10)
+            
+            # Enhanced debugging
+            print(f"Connecting to {host}:{port}...")
             self.socket.connect((host, port))
+            
+            # Test connection
+            self.socket.send(b"\x00")  # Null byte test
+            if self.socket.recv(1) != b"\x00":
+                raise ConnectionError("No heartbeat response")
+                
             self.running = True
             return True
+        
+        except socket.timeout:
+            print("\n[!] Connection timed out (server not responding)")
+        except ConnectionRefusedError:
+            print("\n[!] Connection refused (check server/port)")
         except Exception as e:
-            self.debug_queue.put(f"[CONNECTION FAILED] {str(e)}")
-            return False
+            print(f"\n[!] Connection error: {str(e)}")
+        return False
 
     def shutdown(self):
         self.running = False

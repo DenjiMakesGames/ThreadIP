@@ -1,28 +1,13 @@
 import socket
 import threading
-import subprocess
-import sys
-import os
+import time
 from queue import Queue
-from auth import init_db, authenticate_user, register_user, is_admin
+from auth import init_db
 from session_manager import session_manager
-from utils import log_session, log_message
+from utils import log_session, debug_log
 from admin import handle_admin_command
 
-# Debug message queue (thread-safe)
 debug_queue = Queue()
-
-def debug_console():
-    """Open a separate terminal window for debug output"""
-    if os.name == 'nt':  # Windows
-        subprocess.Popen(['start', 'python', 'debug_console.py'], shell=True)
-    else:  # Linux/Mac
-        subprocess.Popen(['x-terminal-emulator', '-e', 'python3 debug_console.py'])
-
-def debug_log(message, level="INFO"):
-    """Send messages to debug console"""
-    debug_queue.put(f"[{level}] {message}")
-    log_session(message, level)  # Also log to file
 
 class ChatServer:
     def __init__(self, host='0.0.0.0', port=5000):
@@ -31,7 +16,18 @@ class ChatServer:
         self.server_socket = None
         self.running = False
 
+    def debug_console(self):
+        """Start debug console in separate window"""
+        try:
+            if os.name == 'nt':
+                subprocess.Popen(['start', 'python', 'debug_console.py'], shell=True)
+            else:
+                subprocess.Popen(['x-terminal-emulator', '-e', 'python3 debug_console.py'])
+        except Exception as e:
+            print(f"Debug console error: {str(e)}")
+
     def start(self):
+        """Main server startup sequence"""
         init_db()
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -39,11 +35,10 @@ class ChatServer:
         self.server_socket.listen(5)
         self.running = True
 
-        # Start debug console
-        debug_console()
+        self.debug_console()
         debug_log(f"Server started on {self.host}:{self.port}")
 
-        # Admin input thread
+        # Start admin interface
         threading.Thread(target=self.admin_input, daemon=True).start()
 
         try:
@@ -57,32 +52,38 @@ class ChatServer:
         except KeyboardInterrupt:
             self.stop()
 
-    def admin_input(self):
-        """Handle admin commands from server terminal"""
-        while self.running:
-            try:
-                cmd = input("[ADMIN] ").strip()
-                if cmd.lower() == '/quit':
-                    self.stop()
-                    break
-                
-                if cmd.startswith('/'):
-                    response = handle_admin_command(cmd[1:])
-                    print(response)
-                else:
-                    # Broadcast as admin
-                    session_manager.broadcast(f"ADMIN: {cmd}")
-                    debug_log(f"Admin broadcast: {cmd}")
-            except Exception as e:
-                debug_log(f"Admin input error: {str(e)}", "ERROR")
-
     def stop(self):
+        """Clean server shutdown"""
         self.running = False
         if self.server_socket:
             self.server_socket.close()
-        print("\n[!] Server stopped")
+        debug_log("Server stopped")
+
+    def admin_input(self):
+        """Handle admin commands from console"""
+        print("\nADMIN CONSOLE (type /help for commands)")
+        while self.running:
+            try:
+                cmd = input("ADMIN> ").strip()
+                if not cmd:
+                    continue
+
+                if cmd.lower() == '/quit':
+                    self.stop()
+                    break
+
+                if cmd.startswith('/'):
+                    response = handle_admin_command(cmd[1:])
+                    print(f"Server: {response}")
+                else:
+                    session_manager.broadcast(f"ADMIN: {cmd}")
+                    debug_log(f"Admin broadcast: {cmd}")
+
+            except Exception as e:
+                debug_log(f"Admin command error: {str(e)}", "ERROR")
 
     def handle_client(self, conn, addr):
+        """Handle individual client connection"""
         username = ""
         try:
             conn.settimeout(30)
@@ -99,7 +100,7 @@ class ChatServer:
 
             if choice == 'R':
                 if not register_user(username, password):
-                    conn.send(b"Registration failed (invalid username or exists).\n")
+                    conn.send(b"Registration failed.\n")
                     return
                 conn.send(b"Registered successfully.\n")
             elif choice == 'L':
@@ -115,8 +116,7 @@ class ChatServer:
                 return
 
             conn.send(b"Welcome! Type /quit to exit.\n")
-            log_session(f"{username} connected from {addr[0]}")
-            session_manager.broadcast(f"{username} joined the chat")
+            debug_log(f"{username} connected from {addr[0]}")
 
             # Main message loop
             while self.running:
@@ -149,12 +149,12 @@ class ChatServer:
                     session_manager.broadcast(f"{username}: {message}", exclude=username)
 
                 except socket.timeout:
-                    conn.send(b"\nPing...\n")  # Keepalive check
+                    conn.send(b"\nPing...\n")
                 except (ConnectionResetError, OSError):
                     break
 
         except Exception as e:
-            log_session(f"Error with {username or addr}: {str(e)}", "ERROR")
+            debug_log(f"Error with {username or addr}: {str(e)}", "ERROR")
         finally:
             if username:
                 session_manager.remove_user(username)
@@ -162,5 +162,10 @@ class ChatServer:
             conn.close()
 
 if __name__ == "__main__":
+    import os
+    import subprocess
+    from auth import register_user, authenticate_user, is_admin
+    from utils import log_message
+    
     server = ChatServer()
     server.start()

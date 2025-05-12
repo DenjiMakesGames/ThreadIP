@@ -5,6 +5,7 @@ import socket
 import requests
 from typing import Dict, Optional, Tuple
 import logging
+from main_server import debug_queue
 
 # Constants
 DATABASE_FOLDER = "Database"
@@ -91,8 +92,17 @@ class Logger:
             print(f"\033[91mLog write failed: {str(e)}\033[0m")
 
 # Legacy functions for backward compatibility
-def log_message(sender: str, message: str, direction: str = "sent"):
-    Logger.log(f"{direction.upper()} - {sender}: {message}")
+def log_message(sender, message, direction="sent"):
+    """Log messages to messages.log"""
+    timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+    entry = f"{timestamp} {direction.upper()} - {sender}: {message}\n"
+    
+    # Write to messages.log
+    with open("Database/messages.log", "a") as f:
+        f.write(entry)
+    
+    # Also show in debug console if needed
+    debug_queue.put(f"[MSG] {entry.strip()}")
 
 def broadcast_message(message: str, clients: Dict[str, socket.socket], 
                     exclude: Optional[str] = None) -> int:
@@ -106,5 +116,14 @@ def broadcast_message(message: str, clients: Dict[str, socket.socket],
                 Logger.log(f"Broadcast failed to {user}: {str(e)}", "WARNING")
     return success
 
-def log_session(entry: str, level: str = "INFO"):
-    Logger.log(entry, level)
+def log_session(entry, level="INFO"):
+    """Log server events to session.log"""
+    timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+    log_entry = f"{timestamp} [{level}] {entry}\n"
+    
+    # Write to session.log
+    with open("Database/session.log", "a") as f:
+        f.write(log_entry)
+    
+    # Send to debug console
+    debug_queue.put(log_entry.strip())
