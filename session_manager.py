@@ -2,7 +2,8 @@
 import threading
 import time
 import socket
-from utils import log_session, broadcast_message
+from utils import debug_log, broadcast_message
+from config import debug_queue
 
 class SessionManager:
     def __init__(self):
@@ -22,17 +23,17 @@ class SessionManager:
         """Add a new user with thread-safe checks"""
         with self.lock:
             if username in self.banned_users:
-                log_session(f"Banned user {username} tried to connect", "WARNING")
+                debug_log(f"Banned user {username} tried to connect", "WARNING")
                 return False
                 
             if username in self.connected_users:
-                log_session(f"Duplicate connection from {username}", "WARNING")
+                debug_log(f"Duplicate connection from {username}", "WARNING")
                 return False
                 
             self.connected_users[username] = client_socket
             self.message_timestamps[username] = []
             
-        log_session(f"User {username} connected")
+        debug_log(f"User {username} connected")
         self.broadcast(f"Server: {username} joined the chat", exclude=username)
         return True
 
@@ -48,7 +49,7 @@ class SessionManager:
                 if username in self.message_timestamps:
                     del self.message_timestamps[username]
                     
-        log_session(f"User {username} disconnected")
+        debug_log(f"User {username} disconnected")
         self.broadcast(f"Server: {username} left the chat", exclude=username)
 
     def ban_user(self, username: str):
@@ -57,20 +58,20 @@ class SessionManager:
             self.banned_users.add(username)
             if username in self.connected_users:
                 self.remove_user(username)
-        log_session(f"ADMIN banned user {username}")
+        debug_log(f"ADMIN banned user {username}")
 
     def mute_user(self, username: str):
         """Prevent a user from sending messages"""
         with self.lock:
             self.muted_users.add(username)
-        log_session(f"ADMIN muted user {username}")
+        debug_log(f"ADMIN muted user {username}")
 
     def unmute_user(self, username: str):
         """Remove mute restrictions"""
         with self.lock:
             if username in self.muted_users:
                 self.muted_users.remove(username)
-        log_session(f"ADMIN unmuted user {username}")
+        debug_log(f"ADMIN unmuted user {username}")
 
     def is_muted(self, username: str) -> bool:
         """Check if user is muted"""
@@ -83,7 +84,7 @@ class SessionManager:
             if username not in self.user_warnings:
                 self.user_warnings[username] = []
             self.user_warnings[username].append(reason)
-        log_session(f"ADMIN warned {username}: {reason}")
+        debug_log(f"ADMIN warned {username}: {reason}")
 
     def get_warnings(self, username: str) -> list:
         """Get all warnings for a user"""

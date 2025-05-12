@@ -1,13 +1,12 @@
+# main_server.py
 import socket
 import threading
-import time
-from queue import Queue
-from auth import init_db
-from session_manager import session_manager
-from utils import log_session, debug_log
+import subprocess
+import os
+from config import debug_queue, session_manager
+from auth import init_db, register_user, authenticate_user, is_admin
 from admin import handle_admin_command
-
-debug_queue = Queue()
+from utils import log_message, debug_log
 
 class ChatServer:
     def __init__(self, host='0.0.0.0', port=5000):
@@ -162,10 +161,7 @@ class ChatServer:
             conn.close()
 
 if __name__ == "__main__":
-    import os
-    import subprocess
-    from auth import register_user, authenticate_user, is_admin
-    from utils import log_message
-    
+    # Initialize core components
+    init_db()
     server = ChatServer()
     server.start()

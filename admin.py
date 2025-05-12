@@ -1,5 +1,5 @@
 from session_manager import session_manager
-from utils import log_session
+from utils import debug_log
 import threading
 
 def handle_admin_command(command: str):
@@ -19,7 +19,7 @@ def handle_admin_command(command: str):
             except (ConnectionError, OSError):
                 pass
             session_manager.remove_user(username)
-            log_session(f"ADMIN kicked user \"{username}\"")
+            debug_log(f"ADMIN kicked user \"{username}\"")
             return f"Kicked {username}"
         return f"User {username} not found"
 
@@ -68,11 +68,11 @@ def handle_admin_command(command: str):
                 sock.send(f"ADMIN BROADCAST: {message}\n".encode())
             except (ConnectionError, OSError):
                 pass
-        log_session(f"ADMIN broadcasted: {message}")
+        debug_log(f"ADMIN broadcasted: {message}")
         return "Broadcast sent"
 
     elif cmd == "/shutdown":
-        log_session("ADMIN shutdown server")
+        debug_log("ADMIN shutdown server")
         for user, sock in session_manager.connected_users.items():
             try:
                 sock.send(b"Server is shutting down.\n")

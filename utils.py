@@ -5,7 +5,14 @@ import socket
 import requests
 from typing import Dict, Optional, Tuple
 import logging
-from main_server import debug_queue
+from config import (
+    debug_queue,
+    DATABASE_FOLDER,
+    USER_STATUS_DB,
+    SESSION_LOG,
+    MESSAGE_LOG
+)
+os.makedirs(DATABASE_FOLDER, exist_ok=True)
 
 # Constants
 DATABASE_FOLDER = "Database"
@@ -92,38 +99,34 @@ class Logger:
             print(f"\033[91mLog write failed: {str(e)}\033[0m")
 
 # Legacy functions for backward compatibility
+def debug_log(message, level="INFO"):
+    """Universal logging function for both console and files"""
+    timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+    log_entry = f"{timestamp} [{level}] {message}"
+    
+    # Write to session log
+    with open(SESSION_LOG, "a") as f:
+        f.write(log_entry + "\n")
+    
+    # Send to debug queue
+    debug_queue.put(log_entry)
+    
+    # Print important messages to console
+    if level in ("ERROR", "WARNING"):
+        print(log_entry)
+
 def log_message(sender, message, direction="sent"):
-    """Log messages to messages.log"""
-    timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-    entry = f"{timestamp} {direction.upper()} - {sender}: {message}\n"
-    
-    # Write to messages.log
-    with open("Database/messages.log", "a") as f:
-        f.write(entry)
-    
-    # Also show in debug console if needed
-    debug_queue.put(f"[MSG] {entry.strip()}")
+    """Specialized message logging"""
+    entry = f"{datetime.now().strftime('[%Y-%m-%d %H:%M:%S]')} {direction.upper()} - {sender}: {message}"
+    with open(MESSAGE_LOG, "a") as f:
+        f.write(entry + "\n")
+    debug_queue.put(entry)
 
-def broadcast_message(message: str, clients: Dict[str, socket.socket], 
-                    exclude: Optional[str] = None) -> int:
-    success = 0
-    for user, sock in list(clients.items()):
-        if user != exclude:
+def broadcast_message(message, connected_users, exclude=None):
+    """Send message to all connected users"""
+    for username, sock in connected_users.items():
+        if username != exclude:
             try:
-                sock.sendall(f"{message}\n".encode('utf-8'))
-                success += 1
-            except (ConnectionError, OSError) as e:
-                Logger.log(f"Broadcast failed to {user}: {str(e)}", "WARNING")
-    return success
-
-def log_session(entry, level="INFO"):
-    """Log server events to session.log"""
-    timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-    log_entry = f"{timestamp} [{level}] {entry}\n"
-    
-    # Write to session.log
-    with open("Database/session.log", "a") as f:
-        f.write(log_entry)
-    
-    # Send to debug console
-    debug_queue.put(log_entry.strip())
+                sock.send(f"{message}\n".encode())
+            except:
+                debug_log(f"Failed to send to {username}", "WARNING")
