@@ -12,7 +12,9 @@ class ChatServer:
     def __init__(self, host='0.0.0.0', port=5000):
         self.host = host
         self.port = port
-        self.server_socket = None
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.settimeout(5)  # Add socket timeout
         self.running = False
 
     def debug_console(self):

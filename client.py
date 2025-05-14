@@ -77,26 +77,29 @@ class ChatClient:
     def connect(self, host: str, port: int) -> bool:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.settimeout(10)
+            self.socket.settimeout(10)  # Increased timeout
             
-            # Enhanced debugging
-            print(f"Connecting to {host}:{port}...")
+            # Direct connection test
+            print(f"⌛ Connecting to {host}:{port}...")
             self.socket.connect((host, port))
             
-            # Test connection
-            self.socket.send(b"\x00")  # Null byte test
-            if self.socket.recv(1) != b"\x00":
-                raise ConnectionError("No heartbeat response")
+            # Verify handshake
+            self.socket.send(b"PING")
+            if self.socket.recv(4) != b"PONG":
+                raise ConnectionError("Handshake failed")
                 
-            self.running = True
+            print("✅ Connection established")
             return True
         
         except socket.timeout:
-            print("\n[!] Connection timed out (server not responding)")
+            print("\n🕒 Connection timed out - Possible causes:")
+            print("- Server not running")
+            print("- Wrong IP/port")
+            print("- Firewall blocking")
         except ConnectionRefusedError:
-            print("\n[!] Connection refused (check server/port)")
+            print("\n🚫 Connection refused - Server may be offline")
         except Exception as e:
-            print(f"\n[!] Connection error: {str(e)}")
+            print(f"\n❌ Error: {str(e)}")
         return False
 
     def shutdown(self):
